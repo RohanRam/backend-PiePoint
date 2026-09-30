@@ -252,6 +252,8 @@ async function completeWithToolCall(messages, requireTool = false, maxTokens = 1
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
 
+app.get('/', (_req, res) => res.send('🍕 PiePoint AI Backend is running successfully!'));
+
 app.get('/health', (_req, res) => res.json({ status: 'ok', provider: 'groq', model: MODEL }));
 
 app.get('/menu', (_req, res) => res.json(menu));
