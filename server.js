@@ -131,7 +131,7 @@ const tools = [
               required: ["id", "qty"]
             }
           },
-          size: { type: "string", enum: ["SMALL", "MEDIUM", "LARGE"], description: "Size of the pizza. Default to MEDIUM if unspecified." }
+          size: { type: "string", description: "Size of the pizza. Must be SMALL, MEDIUM, or LARGE. Default to MEDIUM if unspecified." }
         },
         required: ["name", "crustId", "sauceId", "cheeseId", "toppings", "size"]
       }
@@ -357,7 +357,8 @@ function handleApiError(err, res) {
   if (err?.message === 'INVALID_JSON' || err?.message === 'EMPTY_RESPONSE') {
     return res.status(502).json({ error: 'AI encountered an issue processing the request. Please try again.' });
   }
-  return res.status(500).json({ error: 'Internal server error.' });
+  // Temporary: Send actual error message for debugging
+  return res.status(500).json({ error: 'Internal server error.', details: err?.message, stack: err?.stack, raw: JSON.stringify(err) });
 }
 
 // ─── Global error handler ────────────────────────────────────────────────────
@@ -367,7 +368,7 @@ app.use((err, _req, res, _next) => {
     return res.status(400).json({ error: 'Malformed JSON payload.' });
   }
   console.error('Unhandled error:', err);
-  res.status(500).json({ error: 'Internal server error.' });
+  res.status(500).json({ error: 'Global Internal server error.', details: err?.message, stack: err?.stack });
 });
 
 // ─── Start ───────────────────────────────────────────────────────────────────
