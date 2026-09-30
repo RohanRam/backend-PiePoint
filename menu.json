@@ -1,0 +1,49 @@
+{
+  "currency": "₹",
+  "customBasePrice": 149,
+  "crusts": [
+    { "id": "c1", "name": "Classic", "description": "Hand-tossed classic crust", "price": 0 },
+    { "id": "c2", "name": "Thin & Crispy", "description": "Thin and crunchy base", "price": 0 },
+    { "id": "c3", "name": "Cheese Burst", "description": "Filled with melting cheese", "price": 99 },
+    { "id": "c4", "name": "Whole Wheat", "description": "Healthy whole grain choice", "price": 49 },
+    { "id": "c5", "name": "Stuffed Crust", "description": "Mozzarella-filled edges", "price": 79 }
+  ],
+  "sauces": [
+    { "id": "s1", "name": "Classic Tomato", "price": 0 },
+    { "id": "s2", "name": "Spicy Arrabbiata", "price": 29 },
+    { "id": "s3", "name": "Garlic Cream", "price": 39 },
+    { "id": "s4", "name": "BBQ Sauce", "price": 39 },
+    { "id": "s5", "name": "Pesto", "price": 49 }
+  ],
+  "cheeses": [
+    { "id": "ch1", "name": "Mozzarella", "price": 0 },
+    { "id": "ch2", "name": "Cheddar", "price": 39 },
+    { "id": "ch3", "name": "Parmesan", "price": 49 },
+    { "id": "ch4", "name": "Four Cheese", "price": 79 }
+  ],
+  "toppings": [
+    { "id": "t1",  "name": "Cheese",      "emoji": "🧀", "price": 49 },
+    { "id": "t2",  "name": "Pepperoni",   "emoji": "🍖", "price": 69 },
+    { "id": "t3",  "name": "Mushroom",    "emoji": "🍄", "price": 49 },
+    { "id": "t4",  "name": "Olive",       "emoji": "🫒", "price": 39 },
+    { "id": "t5",  "name": "Onion",       "emoji": "🧅", "price": 29 },
+    { "id": "t6",  "name": "Bell Pepper", "emoji": "🫑", "price": 39 },
+    { "id": "t7",  "name": "Tomato",      "emoji": "🍅", "price": 29 },
+    { "id": "t8",  "name": "Basil",       "emoji": "🌿", "price": 29 },
+    { "id": "t9",  "name": "Bacon",       "emoji": "🥓", "price": 69 },
+    { "id": "t10", "name": "Jalapeño",    "emoji": "🌶️", "price": 39 }
+  ],
+  "sizes": [
+    { "id": "SMALL",  "label": "S", "inches": 8,  "priceModifier": 0 },
+    { "id": "MEDIUM", "label": "M", "inches": 10, "priceModifier": 50 },
+    { "id": "LARGE",  "label": "L", "inches": 12, "priceModifier": 100 }
+  ],
+  "pizzas": [
+    { "id": "p1", "name": "Margherita Classic",  "description": "The timeless classic with fresh tomato, mozzarella and basil.", "basePrice": 199 },
+    { "id": "p2", "name": "Pepperoni Supreme",   "description": "Loaded with premium pepperoni slices on a rich tomato base.",   "basePrice": 249 },
+    { "id": "p3", "name": "BBQ Chicken",          "description": "Smoky BBQ sauce, tender chicken, caramelized onions.",          "basePrice": 299 },
+    { "id": "p4", "name": "Veggie Delight",       "description": "A colorful medley of fresh garden vegetables.",                 "basePrice": 219 },
+    { "id": "p5", "name": "Four Cheese",           "description": "Mozzarella, cheddar, parmesan and gorgonzola.",                "basePrice": 349 },
+    { "id": "p6", "name": "Hawaiian Dream",        "description": "Sweet pineapple chunks and savory ham.",                        "basePrice": 229 }
+  ]
+}
