@@ -1,5 +1,5 @@
 // ─── PiePoint AI Backend ─────────────────────────────────────────────────────
-// Express server proxying Gemini API for pizza building and chat.
+// Express server proxying Groq API for pizza building and chat.
 // The Android app NEVER holds the API key — all AI calls go through here.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -7,7 +7,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
-import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
+import Groq from 'groq-sdk';
 import { createRequire } from 'module';
 
 const require = createRequire(import.meta.url);
@@ -16,18 +16,19 @@ const menu = require('./menu.json');
 // ─── Config ──────────────────────────────────────────────────────────────────
 
 const PORT = process.env.PORT || 3000;
-const MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+const MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
 const MAX_PROMPT_LENGTH = 500;
 const MAX_CHAT_MESSAGES = 50;
 const MAX_MESSAGE_LENGTH = 1000;
 
-const apiKey = process.env.GEMINI_API_KEY;
+const apiKey = process.env.GROQ_API_KEY;
 if (!apiKey) {
-  console.warn('⚠️  GEMINI_API_KEY is not set.');
-  console.warn('    Copy .env.example to .env and add your Gemini API key from https://aistudio.google.com/app/apikey');
+  console.warn('⚠️  GROQ_API_KEY is not set.');
 }
 
-const genAI = new GoogleGenerativeAI(apiKey || 'missing-key');
+const groq = new Groq({
+  apiKey: apiKey || 'missing-key',
+});
 
 // ─── Express Setup ───────────────────────────────────────────────────────────
 
@@ -103,41 +104,42 @@ ${pizzas}
 
 const menuSummary = buildMenuSummary();
 
-// ─── Gemini Tools Definition ─────────────────────────────────────────────────
+// ─── Tools Definition ────────────────────────────────────────────────────────
 
-const buildPizzaTool = {
-  functionDeclarations: [
-    {
+const tools = [
+  {
+    type: "function",
+    function: {
       name: "build_pizza",
       description: "Builds a custom pizza based on user preferences. Call this when the user asks for a pizza to be built, customized, or recommends a specific pizza.",
       parameters: {
-        type: SchemaType.OBJECT,
+        type: "object",
         properties: {
-          name: { type: SchemaType.STRING, description: "A creative, appetizing name for the pizza." },
-          crustId: { type: SchemaType.STRING, description: "Exact ID of the crust from the menu (e.g., 'c1', 'c2')." },
-          sauceId: { type: SchemaType.STRING, description: "Exact ID of the sauce from the menu (e.g., 's1', 's2')." },
-          cheeseId: { type: SchemaType.STRING, description: "Exact ID of the cheese from the menu (e.g., 'ch1', 'ch2')." },
+          name: { type: "string", description: "A creative, appetizing name for the pizza." },
+          crustId: { type: "string", description: "Exact ID of the crust from the menu (e.g., 'c1', 'c2')." },
+          sauceId: { type: "string", description: "Exact ID of the sauce from the menu (e.g., 's1', 's2')." },
+          cheeseId: { type: "string", description: "Exact ID of the cheese from the menu (e.g., 'ch1', 'ch2')." },
           toppings: {
-            type: SchemaType.ARRAY,
-            description: "Array of toppings to add. Max 5.",
+            type: "array",
+            description: "Array of toppings to add. Keep under 5 toppings total.",
             items: {
-              type: SchemaType.OBJECT,
+              type: "object",
               properties: {
-                id: { type: SchemaType.STRING, description: "Exact ID of the topping from the menu (e.g., 't1', 't2')." },
-                qty: { type: SchemaType.INTEGER, description: "Quantity of this topping (1 to 3)." }
+                id: { type: "string", description: "Exact ID of the topping from the menu (e.g., 't1', 't2')." },
+                qty: { type: "number", description: "Quantity of this topping (1 to 3)." }
               },
               required: ["id", "qty"]
             }
           },
-          size: { type: SchemaType.STRING, description: "Size ID of the pizza (SMALL, MEDIUM, LARGE). Default to MEDIUM." }
+          size: { type: "string", enum: ["SMALL", "MEDIUM", "LARGE"], description: "Size of the pizza. Default to MEDIUM if unspecified." }
         },
         required: ["name", "crustId", "sauceId", "cheeseId", "toppings", "size"]
       }
     }
-  ]
-};
+  }
+];
 
-// ─── System Instructions ─────────────────────────────────────────────────────
+// ─── System Prompts ──────────────────────────────────────────────────────────
 
 const SYSTEM_INSTRUCTION = `You are Pie, the cheerful and knowledgeable pizza concierge for PiePoint.
 Your job is to help customers explore the menu, answer dietary questions, and build custom pizzas.
@@ -157,7 +159,7 @@ CRITICAL RULES:
    - If the system notes that you recently built a pizza, use that exact pizza as the baseline if the user asks for modifications (e.g., "add extra cheese", "change crust to thin").
 5. Be concise, friendly, and use emojis. Do NOT output raw JSON in your text replies.`;
 
-// ─── Validation & Pricing Logic ──────────────────────────────────────────────
+// ─── Validation Helpers ──────────────────────────────────────────────────────
 
 function validateAndPriceStructuredPizza(raw) {
   if (!raw || typeof raw !== 'object') return null;
@@ -168,7 +170,6 @@ function validateAndPriceStructuredPizza(raw) {
   const size = findSize(raw.size);
 
   if (!crust || !sauce || !cheese || !size) {
-    console.warn("[Validation] Missing core component", { raw, crust, sauce, cheese, size });
     return null;
   }
 
@@ -200,9 +201,58 @@ function validateAndPriceStructuredPizza(raw) {
   };
 }
 
+// ─── AI Invocation Logic ─────────────────────────────────────────────────────
+
+async function completeWithToolCall(messages, requireTool = false, maxTokens = 1024, temperature = 0.6) {
+  let attempts = 0;
+  while (attempts < 2) {
+    attempts++;
+
+    const completion = await groq.chat.completions.create({
+      model: MODEL,
+      messages,
+      tools: tools,
+      tool_choice: requireTool ? { type: "function", function: { name: "build_pizza" } } : "auto",
+      max_tokens: maxTokens,
+      temperature,
+    });
+
+    const message = completion.choices?.[0]?.message;
+    if (!message) {
+      if (attempts < 2) continue;
+      throw new Error('EMPTY_RESPONSE');
+    }
+
+    let reply = message.content || "";
+    let rawPizza = null;
+
+    if (message.tool_calls && message.tool_calls.length > 0) {
+      const toolCall = message.tool_calls.find(t => t.function.name === 'build_pizza');
+      if (toolCall) {
+        try {
+          rawPizza = JSON.parse(toolCall.function.arguments);
+        } catch (parseError) {
+          console.warn(`[groq] Tool call JSON parse error (attempt ${attempts}):`, parseError.message);
+          if (attempts < 2) continue;
+          throw new Error('INVALID_JSON');
+        }
+      }
+    }
+
+    // Fallback if LLM triggers tool but forgets conversational text
+    if (!reply && rawPizza) {
+      reply = "I've built a custom pizza for you based on your request! How does this look?";
+    } else if (!reply && !rawPizza) {
+       reply = "I'm here to help you build your favorite pizza! 🍕";
+    }
+
+    return { reply, rawPizza };
+  }
+}
+
 // ─── Routes ──────────────────────────────────────────────────────────────────
 
-app.get('/health', (_req, res) => res.json({ status: 'ok', provider: 'gemini', model: MODEL }));
+app.get('/health', (_req, res) => res.json({ status: 'ok', provider: 'groq', model: MODEL }));
 
 app.get('/menu', (_req, res) => res.json(menu));
 
@@ -214,25 +264,17 @@ app.post('/chat', apiLimiter, async (req, res) => {
       return res.status(400).json({ error: '"messages" must be a non-empty array.' });
     }
 
-    const model = genAI.getGenerativeModel({
-      model: MODEL,
-      systemInstruction: SYSTEM_INSTRUCTION,
-      tools: [buildPizzaTool],
-    });
-
-    // Format messages for Gemini (ignore system messages from Android if any, Gemini uses systemInstruction)
-    const geminiHistory = [];
-    let lastUserMessage = "";
+    const groqMessages = [{ role: 'system', content: SYSTEM_INSTRUCTION }];
 
     for (const msg of messages) {
       if (!msg.content || typeof msg.content !== 'string' || !msg.content.trim()) continue;
       if (msg.role === 'system') continue;
 
-      const role = msg.role === 'user' ? 'user' : 'model';
+      const role = msg.role === 'user' ? 'user' : 'assistant';
       let text = msg.content.slice(0, MAX_MESSAGE_LENGTH);
 
       // Inject previously built pizza context into the model's history so it remembers what it built
-      if (role === 'model' && msg.pizza && typeof msg.pizza === 'object') {
+      if (role === 'assistant' && msg.pizza && typeof msg.pizza === 'object') {
           const pizzaSummary = JSON.stringify({
               crust: msg.pizza.crust?.id,
               sauce: msg.pizza.sauce?.id,
@@ -243,55 +285,29 @@ app.post('/chat', apiLimiter, async (req, res) => {
           text += `\n[System Note: I built this pizza for the user: ${pizzaSummary}]`;
       }
 
-      if (role === 'user') lastUserMessage = text;
-
-      // Only add to history if it's not the very last user message (which we pass to sendMessage)
-      geminiHistory.push({
+      groqMessages.push({
         role,
-        parts: [{ text }],
+        content: text,
       });
     }
 
-    if (geminiHistory.length === 0) {
+    if (groqMessages.length <= 1) {
        return res.status(400).json({ error: 'No valid message content provided.' });
     }
 
-    // Pop the last user message to use as the actual prompt
-    const finalPrompt = geminiHistory.pop().parts[0].text;
+    console.log(`[chat] processing ${groqMessages.length - 1} message(s)...`);
 
-    console.log(`[chat] processing prompt: "${finalPrompt.slice(0, 50)}..."`);
+    const { reply: aiContent, rawPizza } = await completeWithToolCall(groqMessages, false, 1024, 0.6);
 
-    const chat = model.startChat({ history: geminiHistory });
-    const result = await chat.sendMessage(finalPrompt);
-    const response = result.response;
-
-    let reply = response.text() || "";
-    let rawPizza = null;
-
-    // Check for Function Call
-    const functionCalls = response.functionCalls();
-    if (functionCalls && functionCalls.length > 0) {
-      const call = functionCalls.find(fc => fc.name === 'build_pizza');
-      if (call) {
-        rawPizza = call.args;
-        console.log("[chat] Model invoked build_pizza:", JSON.stringify(rawPizza));
-      }
-    }
-
-    // Fallback if LLM triggers tool but forgets conversational text
-    if (!reply && rawPizza) {
-      reply = "I've built a custom pizza for you based on your request! How does this look?";
-    } else if (!reply && !rawPizza) {
-       reply = "I'm here to help you build your favorite pizza! 🍕";
-    }
-
+    let reply = aiContent;
     let suggestedPizza = null;
+
     if (rawPizza) {
       const validated = validateAndPriceStructuredPizza(rawPizza);
       if (validated) {
         suggestedPizza = validated;
       } else {
-        reply += "\n\n*(Note: Some ingredients I wanted to use aren't on our current menu, so I couldn't build that exact pizza. Let me know what you'd like to try instead!)*";
+        reply += "\n\n*(Note: Some ingredients in the requested pizza weren't available in our current menu, so I couldn't build that exact pizza. Feel free to ask what ingredients we have!)*";
       }
     }
 
@@ -300,44 +316,49 @@ app.post('/chat', apiLimiter, async (req, res) => {
 
   } catch (err) {
     console.error('[chat] Error:', err);
-    return res.status(500).json({ error: 'Internal server error processing AI request.' });
+    return handleApiError(err, res);
   }
 });
 
-// Legacy Endpoint mapping for Create Pizza screen
 app.post('/create-pizza', apiLimiter, async (req, res) => {
     try {
         const { prompt } = req.body;
         if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
           return res.status(400).json({ error: 'Valid "prompt" is required.' });
         }
-
-        const model = genAI.getGenerativeModel({
-            model: MODEL,
-            systemInstruction: SYSTEM_INSTRUCTION,
-            tools: [buildPizzaTool],
-            // Force the tool call for the direct builder
-            toolConfig: { functionCallingConfig: { mode: "ANY", allowedFunctionNames: ["build_pizza"] } }
-        });
-
-        const result = await model.generateContent(prompt.trim());
-        const response = result.response;
-
-        let rawPizza = null;
-        const functionCalls = response.functionCalls();
-        if (functionCalls && functionCalls.length > 0) {
-            rawPizza = functionCalls[0].args;
+        if (prompt.length > MAX_PROMPT_LENGTH) {
+            return res.status(400).json({ error: `Prompt too long. Maximum ${MAX_PROMPT_LENGTH} characters.` });
         }
 
-        const pizza = validateAndPriceStructuredPizza(rawPizza);
-        if(!pizza) throw new Error("Failed to validate pizza from model");
+        const groqMessages = [
+            { role: 'system', content: SYSTEM_INSTRUCTION },
+            { role: 'user', content: prompt.trim() },
+        ];
+
+        const { rawPizza } = await completeWithToolCall(groqMessages, true, 512, 0.5);
+        const pizza = validateAndPriceStructuredPizza(rawPizza || {});
+
+        if (!pizza) throw new Error("Failed to validate pizza from model");
 
         return res.json({ pizza, warnings: undefined });
-    } catch (error) {
-        console.error('[create-pizza] Error:', error);
-        return res.status(500).json({ error: 'Internal server error.' });
+    } catch (err) {
+        console.error('[create-pizza] Error:', err.message || err);
+        return handleApiError(err, res);
     }
 });
+
+function handleApiError(err, res) {
+  if (err?.status === 429 || err?.message?.includes('429') || err?.error?.code === 'rate_limit_exceeded') {
+    return res.status(429).json({ error: 'API rate limit reached. Please wait a moment and try again.' });
+  }
+  if (err?.status === 401 || err?.message?.includes('401')) {
+    return res.status(500).json({ error: 'Invalid API key. Check backend/.env.' });
+  }
+  if (err?.message === 'INVALID_JSON' || err?.message === 'EMPTY_RESPONSE') {
+    return res.status(502).json({ error: 'AI encountered an issue processing the request. Please try again.' });
+  }
+  return res.status(500).json({ error: 'Internal server error.' });
+}
 
 // ─── Global error handler ────────────────────────────────────────────────────
 
@@ -353,7 +374,7 @@ app.use((err, _req, res, _next) => {
 
 app.listen(PORT, () => {
   console.log('');
-  console.log('🍕 PiePoint AI Backend (Gemini Function Calling)');
+  console.log('🍕 PiePoint AI Backend (Groq Function Calling)');
   console.log(`   http://localhost:${PORT}`);
   console.log('');
   console.log('   POST /create-pizza  — Direct natural-language pizza builder (Forced Tool)');
